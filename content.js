@@ -1,12 +1,10 @@
 // Claude Scheduler — content script (claude.ai)
-// Отговаря на: ping, getPageInfo, scanModels, executeTask.
+// Отговаря на: ping, getPageInfo, executeTask. Моделите идват от settings.json (през background).
 // Пази се от двойно зареждане (скриптът може да бъде инжектиран и ръчно).
 
 (() => {
   if (window.__claudeSchedulerContentLoaded) return;
   window.__claudeSchedulerContentLoaded = true;
-
-  const MODEL_WORDS = ["opus", "sonnet", "haiku", "fable", "mythos", "claude"];
 
   // ---------- общи помощни ----------
 
@@ -106,7 +104,99 @@
     return Boolean(stop && isVisible(stop));
   }
 
+  // ---------- настройки (идват от settings.json през background) ----------
+
+  const BASE_WORDS = ["opus", "sonnet", "haiku", "fable", "mythos"];
+  let cfg = {
+    models: [],
+    effort: ["Low", "Medium", "High", "Extra", "Max"],
+    menuLabels: { moreModels: ["More models"], effort: ["Effort"] },
+  };
+
+  function applySettings(s) {
+    if (!s || typeof s !== "object") return;
+    cfg = {
+      models: Array.isArray(s.models) ? s.models : cfg.models,
+      effort: Array.isArray(s.effort) ? s.effort : cfg.effort,
+      menuLabels: s.menuLabels || cfg.menuLabels,
+    };
+  }
+
+  try {
+    chrome.storage.local.get("settingsCache").then(({ settingsCache }) => applySettings(settingsCache));
+    chrome.storage.onChanged.addListener((ch, area) => {
+      if (area === "local" && ch.settingsCache) applySettings(ch.settingsCache.newValue);
+    });
+  } catch (_) {}
+
+  // Семействата модели (opus, sonnet, …) + първата дума на всеки модел от settings.json.
+  function modelWords() {
+    const words = new Set([...BASE_WORDS, "claude"]);
+    for (const m of cfg.models) {
+      const w = String(m).trim().split(/\s+/)[0];
+      if (w) words.add(w.toLowerCase());
+    }
+    return [...words];
+  }
+
+  function escapeRe(s) {
+    return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  function modelRe() {
+    const fam = modelWords().filter((w) => w !== "claude").map(escapeRe).join("|");
+    return new RegExp(`(?:^|\\s)((?:${fam})\\s*\\d+(?:\\.\\d+)?)(?![\\d.])`, "i");
+  }
+
+  // Целият видим текст на елемента, с интервали между отделните части.
+  function leafText(el) {
+    if (!el) return "";
+    const parts = [];
+    const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    while (w.nextNode()) {
+      const t = (w.currentNode.nodeValue || "").trim();
+      if (t) parts.push(t);
+    }
+    return parts.join(" ").replace(/[\u200B-\u200D\u2060\uFEFF\uFFFD\uE000-\uF8FF]/g, "").replace(/\s+/g, " ").trim();
+  }
+
+  function norm(s) {
+    return cleanModelName(s).toLowerCase().replace(/\s+/g, " ").trim();
+  }
+
+  // „Opus 5.5 Most capable…“ → „Opus 5.5“
+  function extractModel(text) {
+    const m = String(text || "").match(modelRe());
+    return m ? m[1].replace(/\s+/g, " ").trim() : "";
+  }
+
+  // Точно сравнение: „Opus 5“ ≠ „Opus 5.5“, „Fable 5“ ≠ „Fable 5.1“.
+  function sameModel(a, b) {
+    const x = norm(extractModel(a) || a);
+    const y = norm(extractModel(b) || b);
+    return Boolean(x) && x === y;
+  }
+
+  // 2 = текстът започва с модела, 1 = съдържа го като цяла дума, 0 = не.
+  function modelScore(text, wanted) {
+    const t = norm(text);
+    const w = norm(wanted);
+    if (!t || !w) return 0;
+    const tail = "(?![\\d.])";
+    if (new RegExp(`^${escapeRe(w)}${tail}`).test(t)) return 2;
+    if (new RegExp(`(?:^|\\s)${escapeRe(w)}${tail}`).test(t)) return 1;
+    return 0;
+  }
+
+  function startsWithLabel(text, labels) {
+    const t = norm(text);
+    return (labels || []).some((l) => l && t.startsWith(norm(l)));
+  }
+
+  // ---------- бутонът за модел ----------
+
   function findModelTrigger() {
+    const words = modelWords();
     const direct = document.querySelector('button[data-testid="model-selector-dropdown"]');
     if (direct && isVisible(direct)) return direct;
 
@@ -115,165 +205,272 @@
     const scopes = [root, document.body];
     for (const scope of scopes) {
       for (const b of scope.querySelectorAll('button[aria-haspopup], button[id*="model" i], button[data-testid*="model" i]')) {
-        const t = (b.textContent || "").toLowerCase();
-        if (isVisible(b) && t.length < 60 && MODEL_WORDS.some((w) => t.includes(w))) return b;
+        const t = leafText(b).toLowerCase();
+        if (isVisible(b) && t.length < 60 && words.some((w) => t.includes(w))) return b;
       }
     }
     for (const b of document.querySelectorAll("button")) {
-      const t = (b.textContent || "").trim();
+      const t = leafText(b);
       if (!isVisible(b) || t.length === 0 || t.length > 40) continue;
-      if (MODEL_WORDS.some((w) => t.toLowerCase().includes(w)) && b.querySelector("svg")) return b;
+      if (words.some((w) => t.toLowerCase().includes(w)) && b.querySelector("svg")) return b;
     }
     return null;
   }
 
   function cleanModelName(raw) {
     let s = String(raw || "")
-      // Махва скрити, private-use и повредени Unicode символи
       .replace(/[\u200B-\u200D\u2060\uFEFF\uFFFD\uE000-\uF8FF]/g, "")
       .replace(/\s+/g, " ")
       .trim();
-
     s = s.replace(/^claude\s+/i, "");
     s = s.replace(/\b(new|нов|beta|preview)\b\s*$/i, "").trim();
-
-    // Махва останали квадратчета/иконки в края на името
     s = s.replace(/[^\p{L}\p{N})\]]+$/gu, "").trim();
-
     return s;
   }
 
   function readCurrentModel() {
     const trigger = findModelTrigger();
     if (!trigger) return "";
-    // Взимаме най-краткия смислен текст в бутона (за да отрежем описания).
+    const text = leafText(trigger);
+    const found = extractModel(text);
+    if (found) return found;
+    // Резерва за непознато име: най-краткият текст с дума за модел.
+    const words = modelWords();
     const leaves = [...trigger.querySelectorAll("*")].filter((n) => n.children.length === 0);
     const texts = [trigger.textContent, ...leaves.map((n) => n.textContent)]
       .map((t) => cleanModelName(t))
-      .filter((t) => t && t.length <= 40 && MODEL_WORDS.some((w) => t.toLowerCase().includes(w)));
-    if (!texts.length) return "";
-    return texts.sort((a, b) => a.length - b.length)[0];
+      .filter((t) => t && t.length <= 40 && words.some((w) => t.toLowerCase().includes(w)));
+    return texts.length ? texts.sort((a, b) => a.length - b.length)[0] : "";
   }
 
-  // ---------- списък с модели ----------
+  // Усилието се показва до модела в бутона („Opus 5.5 High“). При „по подразбиране“ може да липсва.
+  function readCurrentEffort() {
+    const trigger = findModelTrigger();
+    if (!trigger) return "";
+    const tokens = leafText(trigger).toLowerCase().split(/\s+/);
+    for (const lvl of cfg.effort) {
+      if (tokens.includes(String(lvl).toLowerCase())) return lvl;
+    }
+    return "";
+  }
+
+  // ---------- работа с менюто ----------
 
   function menuItems() {
     const nodes = document.querySelectorAll(
-      '[role="menuitem"], [role="menuitemradio"], [role="option"], [role="menu"] button, [role="listbox"] [role="option"]'
+      '[role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"], [role="option"], [role="menu"] button'
     );
     return [...nodes].filter(isVisible);
   }
 
-  function labelOfItem(item) {
-    const leaves = [...item.querySelectorAll("*")].filter((n) => n.children.length === 0);
-    const texts = [...leaves.map((n) => n.textContent), item.textContent]
-      .map((t) => cleanModelName(t))
-      .filter((t) => t && t.length <= 40 && MODEL_WORDS.some((w) => t.toLowerCase().includes(w)));
-    if (!texts.length) return "";
-    return texts.sort((a, b) => a.length - b.length)[0];
+  function isSubTrigger(el) {
+    return (
+      el.getAttribute("aria-haspopup") === "menu" ||
+      el.getAttribute("aria-haspopup") === "true" ||
+      startsWithLabel(leafText(el), cfg.menuLabels.moreModels) ||
+      startsWithLabel(leafText(el), cfg.menuLabels.effort)
+    );
   }
 
-  function readOpenMenuModels() {
-    const out = [];
+  function modelMenuOpen() {
+    return menuItems().some((it) => extractModel(leafText(it)));
+  }
+
+  function findModelItem(wanted) {
+    let best = null;
+    let bestScore = 0;
     for (const it of menuItems()) {
-      const label = labelOfItem(it);
-      if (label && !out.includes(label)) out.push(label);
+      if (isSubTrigger(it)) continue;
+      const s = modelScore(leafText(it), wanted);
+      if (s > bestScore) {
+        best = it;
+        bestScore = s;
+      }
     }
-    return out;
+    return best;
   }
 
-  async function cacheModels(models) {
-    if (!models || models.length < 2) return;
-    try {
-      const { knownModels = [] } = await chrome.storage.local.get("knownModels");
-      const merged = [...models];
-      for (const m of knownModels) if (!merged.includes(m)) merged.push(m);
-      await chrome.storage.local.set({ knownModels: merged.slice(0, 15) });
-    } catch (_) {}
+  function findLabeledItem(labels) {
+    return menuItems().find((it) => startsWithLabel(leafText(it), labels)) || null;
   }
 
-  // Учим списъка тихо: когато потребителят сам отвори менюто за модели.
-  let observeTimer = null;
-  const observer = new MutationObserver(() => {
-    clearTimeout(observeTimer);
-    observeTimer = setTimeout(() => {
-      const models = readOpenMenuModels();
-      if (models.length >= 2) cacheModels(models);
-    }, 350);
-  });
-  try {
-    observer.observe(document.body, { childList: true, subtree: true });
-  } catch (_) {}
-
-  // Явно сканиране (по заявка от popup-а): отваря и веднага затваря менюто.
-  async function scanModels() {
-    const trigger = await waitFor(findModelTrigger, 8000);
-    if (!trigger) return { models: [], current: "" };
-    const before = readCurrentModel();
-    trigger.click();
-    const models = (await waitFor(() => {
-      const m = readOpenMenuModels();
-      return m.length >= 2 ? m : null;
-    }, 4000)) || [];
-    closeMenu(trigger);
-    await cacheModels(models);
-    return { models, current: before };
+  function findEffortItem(level) {
+    const w = String(level).toLowerCase();
+    const re = new RegExp(`^${escapeRe(w)}(?![a-zа-я])`, "i");
+    return (
+      menuItems().find((it) => !isSubTrigger(it) && re.test(leafText(it).toLowerCase())) || null
+    );
   }
 
-  function closeMenu(trigger) {
-    for (const target of [document.activeElement || document.body, document.body]) {
-      target.dispatchEvent(
-        new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, which: 27, bubbles: true })
-      );
+  function anyEffortItem() {
+    return cfg.effort.some((l) => findEffortItem(l));
+  }
+
+  function pointerAt(el, type, extra = {}) {
+    const r = el.getBoundingClientRect();
+    const opts = {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      clientX: r.left + r.width / 2,
+      clientY: r.top + r.height / 2,
+      button: 0,
+      buttons: type.includes("down") ? 1 : 0,
+      pointerId: 1,
+      pointerType: "mouse",
+      isPrimary: true,
+      ...extra,
+    };
+    const Ctor = type.startsWith("pointer") ? PointerEvent : MouseEvent;
+    el.dispatchEvent(new Ctor(type, opts));
+  }
+
+  function hover(el) {
+    for (const t of ["pointerover", "pointerenter", "mouseover", "mouseenter", "pointermove", "mousemove"]) {
+      pointerAt(el, t);
     }
-    setTimeout(() => {
-      if (menuItems().length && trigger) trigger.click();
-    }, 250);
+  }
+
+  function press(el) {
+    for (const t of ["pointerdown", "mousedown", "pointerup", "mouseup"]) pointerAt(el, t);
+  }
+
+  function key(el, k) {
+    const codes = { Enter: 13, Escape: 27, ArrowRight: 39, ArrowDown: 40, " ": 32 };
+    el.dispatchEvent(
+      new KeyboardEvent("keydown", { key: k, code: k === " " ? "Space" : k, keyCode: codes[k], which: codes[k], bubbles: true, cancelable: true })
+    );
+  }
+
+  // Отваря главното меню. Пробва няколко начина, защото claude.ai сменя поведението.
+  async function openModelMenu() {
+    const trigger = await waitFor(findModelTrigger, 15000);
+    if (!trigger) throw new Error("Не намерих бутона за избор на модел.");
+    if (modelMenuOpen()) return trigger;
+
+    const ways = [
+      () => trigger.click(),
+      () => press(trigger),
+      () => { trigger.focus(); key(trigger, "Enter"); },
+      () => { trigger.focus(); key(trigger, "ArrowDown"); },
+    ];
+    for (const way of ways) {
+      way();
+      if (await waitFor(() => (modelMenuOpen() ? true : null), 1500, 150)) return trigger;
+    }
+    throw new Error("Менюто за модели не се отвори.");
+  }
+
+  // Отваря подменю („More models“, „Effort“) и чака да се появи съдържанието му.
+  async function openSubmenu(item, ready) {
+    const ways = [
+      () => { item.scrollIntoView({ block: "nearest" }); hover(item); },
+      () => item.click(),
+      () => { item.focus(); key(item, "ArrowRight"); },
+      () => { item.focus(); key(item, "Enter"); },
+    ];
+    for (const way of ways) {
+      way();
+      const ok = await waitFor(() => (ready() ? true : null), 1300, 150);
+      if (ok) return true;
+    }
+    return false;
+  }
+
+  async function closeMenus(trigger) {
+    for (let i = 0; i < 3 && menuItems().length; i++) {
+      for (const target of [document.activeElement || document.body, document.body]) {
+        target.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Escape", code: "Escape", keyCode: 27, which: 27, bubbles: true })
+        );
+      }
+      await sleep(250);
+    }
+    if (menuItems().length && trigger) {
+      trigger.click();
+      await sleep(250);
+    }
+  }
+
+  async function activate(item) {
+    item.click();
+    await sleep(700);
+    if (isVisible(item)) {
+      // Някои менюта реагират само на pointer/Enter.
+      press(item);
+      await sleep(400);
+      if (isVisible(item)) {
+        item.focus();
+        key(item, "Enter");
+        await sleep(400);
+      }
+    }
   }
 
   async function selectModel(modelName) {
-    const wanted = cleanModelName(modelName).toLowerCase();
+    const wanted = cleanModelName(modelName);
     if (!wanted) return { changed: false };
 
-    const trigger = await waitFor(findModelTrigger, 15000);
-    if (!trigger) throw new Error("Не намерих менюто за избор на модел.");
+    await waitFor(findModelTrigger, 15000);
+    const before = readCurrentModel();
+    if (before && sameModel(before, wanted)) return { changed: false, current: before };
 
-    const current = readCurrentModel().toLowerCase();
-    if (current && (current === wanted || current.includes(wanted) || wanted.includes(current))) {
-      return { changed: false, current: readCurrentModel() };
+    const trigger = await openModelMenu();
+    let pick = await waitFor(() => findModelItem(wanted), 1200, 150);
+
+    // Няма го в основното меню → „More models“.
+    if (!pick) {
+      const more = findLabeledItem(cfg.menuLabels.moreModels);
+      if (more) {
+        await openSubmenu(more, () => findModelItem(wanted));
+        pick = await waitFor(() => findModelItem(wanted), 1500, 150);
+      }
     }
-
-    trigger.click();
-    await sleep(400);
-
-    const pick = await waitFor(() => {
-      const items = menuItems();
-      // 1) точно съвпадение
-      for (const it of items) {
-        if (labelOfItem(it).toLowerCase() === wanted) return it;
-      }
-      // 2) частично съвпадение
-      for (const it of items) {
-        const l = labelOfItem(it).toLowerCase();
-        if (l && (l.includes(wanted) || wanted.includes(l))) return it;
-      }
-      return null;
-    }, 6000);
 
     if (!pick) {
-      closeMenu(trigger);
-      throw new Error(`Моделът „${modelName}" не е намерен в менюто.`);
+      await closeMenus(trigger);
+      throw new Error(`Моделът „${modelName}" не е намерен в менюто (нито в „More models"). Проверете името в settings.json.`);
     }
 
-    pick.click();
-    await sleep(700);
+    await activate(pick);
+    await closeMenus(trigger);
 
-    // Провери дали смяната се е приложила
-    const now = readCurrentModel().toLowerCase();
-    if (now && !(now.includes(wanted) || wanted.includes(now))) {
-      throw new Error(`Моделът не беше сменен (остана „${readCurrentModel()}").`);
+    const now = readCurrentModel();
+    if (now && !sameModel(now, wanted)) {
+      throw new Error(`Моделът не беше сменен (остана „${now}"). Ако е модел с кредити, може да изисква покупка.`);
     }
-    return { changed: true, current: readCurrentModel() };
+    return { changed: true, current: now };
+  }
+
+  async function selectEffort(level) {
+    const wanted = String(level || "").trim();
+    if (!wanted) return { changed: false };
+
+    const before = readCurrentEffort();
+    if (before && before.toLowerCase() === wanted.toLowerCase()) return { changed: false };
+
+    const trigger = await openModelMenu();
+    const effortItem = await waitFor(() => findLabeledItem(cfg.menuLabels.effort), 1500, 150);
+    if (!effortItem) {
+      await closeMenus(trigger);
+      throw new Error("Този модел няма настройка за усилие (Effort).");
+    }
+
+    await openSubmenu(effortItem, anyEffortItem);
+    const pick = await waitFor(() => findEffortItem(wanted), 1500, 150);
+    if (!pick) {
+      await closeMenus(trigger);
+      throw new Error(`Нивото „${wanted}" не е намерено в менюто за усилие.`);
+    }
+
+    await activate(pick);
+    await closeMenus(trigger);
+
+    const now = readCurrentEffort();
+    if (now && now.toLowerCase() !== wanted.toLowerCase()) {
+      throw new Error(`Усилието не беше сменено (остана „${now}").`);
+    }
+    return { changed: true };
   }
 
   // ---------- въвеждане и изпращане ----------
@@ -448,14 +645,25 @@
       throw new Error("Не намерих полето за писане (влезли ли сте в claude.ai?).");
     }
 
-    let modelWarning = null;
+    if (task.settings) applySettings(task.settings);
+
+    const warnings = [];
     if (task.model) {
       try {
         await selectModel(task.model);
       } catch (e) {
-        modelWarning = String(e.message || e);
+        warnings.push(String(e.message || e));
       }
     }
+    if (task.effort) {
+      try {
+        await selectEffort(task.effort);
+      } catch (e) {
+        warnings.push(String(e.message || e));
+      }
+    }
+    await closeMenus(findModelTrigger());
+    const modelWarning = warnings.length ? warnings.join(" ") : null;
 
     await typeMessage(editor, task.message);
     await clickSend(editor, task.message);
@@ -512,31 +720,18 @@
     }
 
     if (msg.type === "getPageInfo") {
-      (async () => {
-        const model = readCurrentModel();
-        let known = [];
-        try {
-          ({ knownModels: known = [] } = await chrome.storage.local.get("knownModels"));
-        } catch (_) {}
-        sendResponse({
-          ok: true,
-          url: location.href,
-          chatId: chatIdFromUrl(),
-          isNew: isNewChatPage(),
-          title: pageTitle(),
-          model,
-          models: known,
-          hasEditor: Boolean(findEditor()),
-        });
-      })();
-      return true;
-    }
-
-    if (msg.type === "scanModels") {
-      scanModels()
-        .then((r) => sendResponse({ ok: true, ...r }))
-        .catch((e) => sendResponse({ ok: false, error: String(e.message || e) }));
-      return true;
+      if (msg.settings) applySettings(msg.settings);
+      sendResponse({
+        ok: true,
+        url: location.href,
+        chatId: chatIdFromUrl(),
+        isNew: isNewChatPage(),
+        title: pageTitle(),
+        model: readCurrentModel(),
+        effort: readCurrentEffort(),
+        hasEditor: Boolean(findEditor()),
+      });
+      return;
     }
 
     if (msg.type === "executeTask") {

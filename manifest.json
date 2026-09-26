@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Claude Scheduler",
   "description": "Планирано изпращане на съобщения в claude.ai — таймер, нов разговор, избор на модел.",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "permissions": [
     "alarms",
     "storage",

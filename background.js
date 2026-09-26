@@ -9,6 +9,52 @@ const LATE_GRACE_MS = 5 * 60 * 1000; // закъснение, което още 
 const MAX_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 45 * 1000;
 
+// ---------- settings.json ----------
+
+const DEFAULT_SETTINGS = {
+  models: ["Opus 5.5", "Sonnet 5", "Haiku 4.5"],
+  effort: ["Low", "Medium", "High", "Extra", "Max"],
+  quickHours: [3, 5, 10, 15],
+  menuLabels: { moreModels: ["More models"], effort: ["Effort"] },
+};
+
+function asList(v) {
+  if (Array.isArray(v)) return v.map((x) => String(x).trim()).filter(Boolean);
+  if (typeof v === "string" && v.trim()) return [v.trim()];
+  return [];
+}
+
+// Чете settings.json при всяко извикване (така промените се виждат без презареждане).
+async function loadSettings() {
+  let s = { ...DEFAULT_SETTINGS };
+  let error = null;
+  try {
+    const res = await fetch(chrome.runtime.getURL("settings.json"), { cache: "no-store" });
+    const raw = JSON.parse(await res.text());
+    const models = asList(raw.models);
+    const effort = asList(raw.effort);
+    const hours = Array.isArray(raw.quickHours)
+      ? raw.quickHours.map(Number).filter((n) => Number.isFinite(n) && n > 0)
+      : [];
+    const labels = raw.menuLabels || {};
+    s = {
+      models: models.length ? models : DEFAULT_SETTINGS.models,
+      effort: effort.length ? effort : DEFAULT_SETTINGS.effort,
+      quickHours: hours.length ? hours : DEFAULT_SETTINGS.quickHours,
+      menuLabels: {
+        moreModels: asList(labels.moreModels).length ? asList(labels.moreModels) : DEFAULT_SETTINGS.menuLabels.moreModels,
+        effort: asList(labels.effort).length ? asList(labels.effort) : DEFAULT_SETTINGS.menuLabels.effort,
+      },
+    };
+  } catch (e) {
+    error = `settings.json има грешка: ${String(e.message || e)}`;
+  }
+  try {
+    await chrome.storage.local.set({ settingsCache: s });
+  } catch (_) {}
+  return { ...s, error };
+}
+
 // ---------- storage ----------
 
 async function getTasks() {
@@ -84,7 +130,11 @@ async function rehydrate({ afterBrowserStart = false } = {}) {
   await updateBadge(tasks);
 }
 
-chrome.runtime.onInstalled.addListener(() => rehydrate());
+chrome.runtime.onInstalled.addListener(async () => {
+  try { await chrome.storage.local.remove("knownModels"); } catch (_) {}
+  await loadSettings();
+  await rehydrate();
+});
 chrome.runtime.onStartup.addListener(() => rehydrate({ afterBrowserStart: true }));
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
@@ -162,8 +212,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: true });
       } else if (msg.type === "getPageInfo") {
         sendResponse(await getPageInfo());
-      } else if (msg.type === "scanModels") {
-        sendResponse(await scanModelsOnActiveTab());
+      } else if (msg.type === "getSettings") {
+        sendResponse({ ok: true, ...(await loadSettings()) });
       } else {
         sendResponse({ ok: false, error: "Непозната команда." });
       }
@@ -190,7 +240,8 @@ async function activeClaudeTab() {
 }
 
 async function getPageInfo() {
-  const store = await chrome.storage.local.get(["knownModels", "defaultModel", "lastModel"]);
+  const store = await chrome.storage.local.get(["defaultModel", "lastModel"]);
+  const settings = await loadSettings();
   const { tab, fallback } = await activeClaudeTab();
   const base = {
     ok: true,
@@ -199,8 +250,8 @@ async function getPageInfo() {
     chatId: "",
     title: "",
     model: "",
+    effort: "",
     isNew: false,
-    models: store.knownModels || [],
     defaultModel: store.defaultModel || "",
     lastModel: store.lastModel || "",
   };
@@ -211,25 +262,15 @@ async function getPageInfo() {
   base.title = (tab.title || "").replace(/\s*[-–—|·]\s*Claude\s*$/i, "").trim();
 
   await ensureContentScript(tab.id, 4);
-  const res = await askTab(tab.id, { type: "getPageInfo" }, 2, 400);
+  const res = await askTab(tab.id, { type: "getPageInfo", settings }, 2, 400);
   if (res && res.ok) {
     base.chatId = res.chatId || urlId;
     base.title = res.title || base.title;
     base.model = res.model || "";
+    base.effort = res.effort || "";
     base.isNew = Boolean(res.isNew);
-    if (res.models && res.models.length) base.models = res.models;
   }
   return base;
-}
-
-async function scanModelsOnActiveTab() {
-  const { tab } = await activeClaudeTab();
-  if (!tab) return { ok: false, error: "Отворете раздел с claude.ai." };
-  await ensureContentScript(tab.id, 6);
-  const res = await askTab(tab.id, { type: "scanModels" }, 1, 500);
-  if (!res || !res.ok) return { ok: false, error: (res && res.error) || "Страницата не отговори." };
-  const { knownModels = [] } = await chrome.storage.local.get("knownModels");
-  return { ok: true, models: res.models && res.models.length ? res.models : knownModels, current: res.current };
 }
 
 // ---------- изпълнение ----------
@@ -266,6 +307,7 @@ async function runTask(id) {
     const injected = await ensureContentScript(tab.id);
     if (!injected) throw new Error("Скриптът не можа да се зареди в страницата.");
 
+    const settings = await loadSettings();
     const res = await askTab(
       tab.id,
       {
@@ -275,6 +317,8 @@ async function runTask(id) {
           attempt: task.attempts || 0,
           message: task.message,
           model: task.model || "",
+          effort: task.effort || "",
+          settings,
           chatMode: task.chatMode,
         },
       },
@@ -298,7 +342,7 @@ async function runTask(id) {
       res.skipped
         ? `Съобщението вече беше в разговора (${task.time}).`
         : res.modelWarning
-        ? `Изпратено (${task.time}), но моделът не беше сменен.`
+        ? `Изпратено (${task.time}), но: ${res.modelWarning}`
         : `Изпратено в ${task.time}${res.model ? " · " + res.model : ""}.`
     );
 

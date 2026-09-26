@@ -21,7 +21,7 @@
 * { box-sizing: border-box; }
 
 body {
-  width: 380px;
+  width: 450px;
   margin: 0;
   background: var(--bg);
   color: var(--text);
@@ -385,7 +385,9 @@ button.mini:hover:not(:disabled) {
 }
 button.mini:disabled { opacity: 0.6; cursor: default; }
 
-select#model {
+select#model,
+select#effort {
+  margin-top: 4px;
   width: 100%;
   padding: 7px 9px;
   background: var(--field);
@@ -395,7 +397,8 @@ select#model {
   font: 13px system-ui, "Segoe UI", sans-serif;
   cursor: pointer;
 }
-select#model:focus-visible {
+select#model:focus-visible,
+select#effort:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
@@ -407,3 +410,51 @@ select#model:focus-visible {
   color: var(--muted);
 }
 .page-note.warn { color: var(--err); }
+
+/* --- v2.1: бързи бутони за часове, усилие --- */
+
+.quick-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: -2px 0 12px;
+}
+
+.quick-hours {
+  display: flex;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.quick-btn {
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  padding: 4px 9px;
+  background: var(--card);
+  color: var(--text);
+  font: 700 11.5px var(--mono);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.quick-btn:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.quick-btn:active { transform: translateY(1px); }
+
+.relative-note {
+  font: 600 11px var(--mono);
+  color: var(--accent);
+  white-space: nowrap;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.relative-note.warn { color: var(--err); }
+
+.row.two.model-row { margin-bottom: 0; }
+.row.two.model-row label.grow { flex: 1.7; }
+.model-note { margin: 4px 0 10px; }

@@ -46,6 +46,11 @@
           </label>
         </div>
 
+        <div class="quick-row">
+          <div class="quick-hours" id="quick-hours" role="group" aria-label="Бързо добавяне на часове"></div>
+          <div class="relative-note" id="relative-note"></div>
+        </div>
+
         <div class="row">
           <div class="seg" role="radiogroup" aria-label="Разговор">
             <label class="seg-opt">
@@ -68,14 +73,17 @@
           <div class="page-note" id="page-note">Проверявам текущата страница…</div>
         </div>
 
-        <div class="row">
-          <label class="field-head">
-            <span>Модел</span>
-            <button type="button" class="mini" id="refresh-models" title="Прочети списъка с модели от страницата">↻ Обнови</button>
+        <div class="row two model-row">
+          <label class="grow">
+            Модел
+            <select id="model"></select>
           </label>
-          <select id="model"></select>
-          <div class="page-note" id="model-note"></div>
+          <label>
+            Усилие
+            <select id="effort"></select>
+          </label>
         </div>
+        <div class="page-note model-note" id="model-note"></div>
 
         <div class="row">
           <label>

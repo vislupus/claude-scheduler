@@ -15,7 +15,9 @@ const modelSelect = document.getElementById("model");
 const modelNote = document.getElementById("model-note");
 const pageNote = document.getElementById("page-note");
 const useCurrentBtn = document.getElementById("use-current");
-const refreshModelsBtn = document.getElementById("refresh-models");
+const effortSelect = document.getElementById("effort");
+const quickHoursEl = document.getElementById("quick-hours");
+const relativeNote = document.getElementById("relative-note");
 const messageInput = document.getElementById("message");
 const formError = document.getElementById("form-error");
 const listEl = document.getElementById("task-list");
@@ -34,7 +36,9 @@ let nowMode = false;
 let chatIdManual = false;   // потребителят е писал ръчно в полето за чат
 let pageInfo = null;        // последна информация за отворената страница
 let pendingModelValue = "";  // модел от черновата, преди списъкът да е зареден
-let storeCache = { knownModels: [], lastModel: "", defaultModel: "" };
+let pendingEffortValue = "";
+let storeCache = { lastModel: "", defaultModel: "" };
+let settings = { models: [], effort: [], quickHours: [3, 5, 10, 15], error: null };
 let restoringDraft = false;
 let lastFocus = { id: null, start: null, end: null };
 
@@ -46,14 +50,17 @@ let lastFocus = { id: null, start: null, end: null };
   preparePageControls();
   await restoreDraft();
 
-  // Веднага показваме последно запомнените модели, за да не мига празен списък.
+  // Моделите, усилието и бързите бутони идват от settings.json.
   try {
     storeCache = {
       ...storeCache,
-      ...(await chrome.storage.local.get(["knownModels", "lastModel", "defaultModel"])),
+      ...(await chrome.storage.local.get(["lastModel", "defaultModel"])),
     };
   } catch (_) {}
-  populateModels(storeCache.knownModels || []);
+  await loadSettings();
+  renderQuickHours();
+  populateModels(settings.models);
+  populateEffort();
   updateModelNote();
 
   await loadTasks();
@@ -99,33 +106,9 @@ function preparePageControls() {
     await persistDraft();
   });
 
-  refreshModelsBtn.addEventListener("click", async () => {
-    refreshModelsBtn.disabled = true;
-    const original = refreshModelsBtn.textContent;
-    refreshModelsBtn.textContent = "Чета…";
-    try {
-      const res = await chrome.runtime.sendMessage({ type: "scanModels" });
-      if (res && res.ok) {
-        if (res.current) {
-          pageInfo = { ...(pageInfo || {}), model: res.current };
-        }
-        populateModels(res.models || []);
-        updateModelNote();
-      } else {
-        modelNote.textContent = (res && res.error) || "Не успях да прочета моделите.";
-        modelNote.classList.add("warn");
-      }
-    } catch (_) {
-      modelNote.textContent = "Не успях да прочета моделите.";
-      modelNote.classList.add("warn");
-    } finally {
-      refreshModelsBtn.textContent = original;
-      refreshModelsBtn.disabled = false;
-    }
-  });
-
   for (const r of form.querySelectorAll('input[name="chatMode"]')) {
     r.addEventListener("change", () => {
+      populateEffort();
       updatePageNote();
       updateModelNote();
     });
@@ -138,7 +121,6 @@ async function refreshPageInfo({ force = false } = {}) {
     if (!info || !info.ok) return;
     pageInfo = info;
     storeCache = {
-      knownModels: info.models || storeCache.knownModels,
       lastModel: info.lastModel || storeCache.lastModel,
       defaultModel: info.defaultModel || storeCache.defaultModel,
     };
@@ -149,7 +131,8 @@ async function refreshPageInfo({ force = false } = {}) {
       await persistDraft();
     }
 
-    populateModels(info.models || []);
+    populateModels(settings.models);
+    populateEffort();
     updatePageNote();
     updateModelNote();
   } catch (_) {}
@@ -178,6 +161,15 @@ function updatePageNote() {
   pageNote.textContent = same
     ? `${label}: ${title}`
     : `${label}: ${title} · натиснете „От текущата страница", за да я използвате`;
+}
+
+async function loadSettings() {
+  try {
+    const res = await chrome.runtime.sendMessage({ type: "getSettings" });
+    if (res && res.ok) settings = res;
+  } catch (e) {
+    settings = { ...settings, error: "Не успях да прочета settings.json." };
+  }
 }
 
 // Първата опция винаги е активният модел и означава „без промяна".
@@ -214,6 +206,31 @@ function populateModels(models) {
   pendingModelValue = "";
 }
 
+// Усилие: първата опция = без промяна (показва текущото, ако се вижда).
+function populateEffort() {
+  const wanted = pendingEffortValue || effortSelect.value || "";
+  const current = chatMode() === "existing" && pageInfo ? pageInfo.effort || "" : "";
+
+  effortSelect.innerHTML = "";
+  const keep = document.createElement("option");
+  keep.value = "";
+  keep.textContent = current ? `${current} ✓` : "Без промяна";
+  effortSelect.appendChild(keep);
+
+  const levels = [...(settings.effort || [])];
+  if (wanted && !levels.includes(wanted)) levels.push(wanted);
+  for (const lvl of levels) {
+    if (current && lvl.toLowerCase() === current.toLowerCase()) continue;
+    const opt = document.createElement("option");
+    opt.value = lvl;
+    opt.textContent = lvl;
+    effortSelect.appendChild(opt);
+  }
+
+  effortSelect.value = [...effortSelect.options].some((o) => o.value === wanted) ? wanted : "";
+  pendingEffortValue = "";
+}
+
 function currentModelName() {
   const src = pageInfo || storeCache;
   if (chatMode() === "new") {
@@ -225,10 +242,19 @@ function currentModelName() {
 function updateModelNote() {
   const current = currentModelName();
   const chosen = modelSelect.value;
+  const effort = effortSelect.value;
   modelNote.classList.remove("warn");
 
-  if (chosen) {
-    modelNote.textContent = `Ще бъде превключено на „${chosen}" преди изпращане.`;
+  if (settings.error) {
+    modelNote.textContent = settings.error;
+    modelNote.classList.add("warn");
+    return;
+  }
+  if (chosen || effort) {
+    const parts = [];
+    if (chosen) parts.push(`модел „${chosen}"`);
+    if (effort) parts.push(`усилие „${effort}"`);
+    modelNote.textContent = `Преди изпращане ще се превключи на ${parts.join(" и ")}.`;
     return;
   }
   if (chatMode() === "new") {
@@ -305,6 +331,7 @@ function getDraftData() {
     chatMode: chatMode(),
     chatId: chatIdInput.value,
     model: modelSelect.value,
+    effort: effortSelect.value,
     message: messageInput.value,
   };
 }
@@ -336,6 +363,7 @@ async function restoreDraft() {
     const draftAge = Date.now() - Number(draft.updatedAt || 0);
     chatIdManual = Boolean(draft.chatIdManual) && draftAge < 6 * 60 * 60 * 1000;
     pendingModelValue = String(draft.model || "");
+    pendingEffortValue = String(draft.effort || "");
     messageInput.value = String(draft.message || "");
 
     setChatMode(draft.chatMode === "new" ? "new" : "existing");
@@ -510,6 +538,81 @@ function prepareMaskedInputs() {
   });
 }
 
+// ---------- бързи бутони +Ч ----------
+
+function renderQuickHours() {
+  quickHoursEl.innerHTML = "";
+  for (const h of settings.quickHours || []) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "quick-btn";
+    b.textContent = `+${h} ч`;
+    b.title = `Добави ${h} ч (към попълнения час, или от сега, ако няма)`;
+    b.addEventListener("click", () => addHours(h));
+    quickHoursEl.appendChild(b);
+  }
+}
+
+// Добавя към вече попълнения момент (ако е в бъдещето), иначе към сега.
+// Така +3 и после +5 дава +8. „Сега" връща към текущия момент.
+function addHours(h) {
+  let base = Date.now();
+  if (!nowMode) {
+    const peek = peekWhen();
+    if (peek && peek > Date.now()) base = peek;
+  }
+  const target = new Date(base + h * 3600 * 1000);
+  deactivateNowMode();
+  setDateTimeInputs(target);
+  formError.hidden = true;
+  updateRelativeNote();
+  persistDraft();
+}
+
+// Чете часа/датата от полетата, без да ги променя (за да не пречи при писане).
+function peekWhen() {
+  const hh = timeHoursInput.value.trim();
+  const mm = timeMinutesInput.value.trim();
+  if (hh.length !== 2 || mm.length !== 2) return null;
+  const hours = Number(hh);
+  const minutes = Number(mm);
+  if (hours > 23 || minutes > 59) return null;
+
+  const dd = dateDayInput.value.trim();
+  const mo = dateMonthInput.value.trim();
+  const yy = dateYearInput.value.trim();
+  if (!dd && !mo && !yy) return computeWhen({ hours, minutes }, null);
+  if (dd.length < 1 || mo.length < 1 || yy.length !== 4) return null;
+  const d = new Date(Number(yy), Number(mo) - 1, Number(dd), hours, minutes, 0, 0);
+  if (d.getDate() !== Number(dd) || d.getMonth() !== Number(mo) - 1) return null;
+  return d.getTime();
+}
+
+function updateRelativeNote() {
+  if (nowMode) {
+    relativeNote.textContent = "веднага";
+    relativeNote.classList.remove("warn");
+    return;
+  }
+  const when = peekWhen();
+  if (!when) {
+    relativeNote.textContent = "";
+    return;
+  }
+  const ms = when - Date.now();
+  if (ms <= 0) {
+    relativeNote.textContent = "моментът е минал";
+    relativeNote.classList.add("warn");
+    return;
+  }
+  relativeNote.classList.remove("warn");
+  const totalMin = Math.ceil(ms / 60000);
+  const d = Math.floor(totalMin / 1440);
+  const h = Math.floor((totalMin % 1440) / 60);
+  const m = totalMin % 60;
+  relativeNote.textContent = "след " + (d ? `${d} д ` : "") + `${h} ч ${pad2(m)} мин`;
+}
+
 function focusFirstEmpty(inputs) {
   focusAndSelect(inputs.find((input) => !input.value) || inputs[0]);
 }
@@ -576,6 +679,7 @@ form.addEventListener("submit", async (e) => {
   const message = messageInput.value.trim();
   const mode = chatMode();
   const model = modelSelect.value.trim();
+  const effort = effortSelect.value.trim();
 
   if (!parsedTime && !message) {
     return showError("Попълнете час и съобщение.");
@@ -613,7 +717,7 @@ form.addEventListener("submit", async (e) => {
   if (editingId) {
     await chrome.runtime.sendMessage({
       type: "updateTask",
-      task: { id: editingId, when, time: timeVal, chatMode: mode, chatId, model, message },
+      task: { id: editingId, when, time: timeVal, chatMode: mode, chatId, model, effort, message },
     });
     exitEditMode();
   } else {
@@ -624,6 +728,7 @@ form.addEventListener("submit", async (e) => {
       chatMode: mode,
       chatId,
       model,
+      effort,
       message,
       status: "pending",
       createdAt: Date.now(),
@@ -645,6 +750,8 @@ async function resetForm() {
   deactivateNowMode();
   modelSelect.value = "";
   pendingModelValue = "";
+  effortSelect.value = "";
+  pendingEffortValue = "";
   chatIdManual = false;
   chatIdInput.value = "";
   formError.hidden = true;
@@ -659,6 +766,7 @@ async function resetForm() {
 
 cancelEditBtn.addEventListener("click", exitEditMode);
 modelSelect.addEventListener("change", updateModelNote);
+effortSelect.addEventListener("change", updateModelNote);
 chatIdInput.addEventListener("input", () => {
   updatePageNote();
   updateModelNote();
@@ -673,7 +781,9 @@ function enterEditMode(task) {
   chatIdInput.value = task.chatId || "";
   chatIdManual = true;
   pendingModelValue = task.model || "";
-  populateModels(pageInfo ? pageInfo.models : []);
+  pendingEffortValue = task.effort || "";
+  populateModels(settings.models);
+  populateEffort();
   messageInput.value = task.message;
   updateChatRow();
   updatePageNote();
@@ -800,6 +910,7 @@ function render() {
       : t.usedModel
       ? ` · ${t.usedModel}`
       : " · текущият модел";
+    const effortStr = t.effort ? ` · ${t.effort}` : "";
     const canRun = t.status === "pending" || t.status === "missed";
     const retryStr =
       t.status === "pending" && t.attempts
@@ -811,7 +922,7 @@ function render() {
         <span class="task-when">${whenStr}</span>
         <span class="task-count" data-when="${t.when}" data-status="${t.status}"></span>
       </div>
-      <div class="task-meta">${escapeHtml(target)}${escapeHtml(modelStr)}</div>
+      <div class="task-meta">${escapeHtml(target)}${escapeHtml(modelStr)}${escapeHtml(effortStr)}</div>
       <div class="task-msg" title="${escapeHtml(t.message)}">${escapeHtml(t.message)}</div>
       ${t.status === "missed" ? `<div class="task-err">Браузърът е бил затворен в зададения час. Редактирайте часа или я пуснете ръчно.</div>` : ""}
       ${retryStr}
@@ -849,6 +960,7 @@ clearDoneBtn.addEventListener("click", () =>
 
 function tick() {
   const now = Date.now();
+  updateRelativeNote();
 
   const pending = tasks
     .filter((t) => t.status === "pending")
