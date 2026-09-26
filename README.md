@@ -1,75 +1,65 @@
-# Claude Scheduler 2.1 — добавка за Brave
 
-Планирано изпращане на съобщения в claude.ai: час и дата, обратен брояч към всяка заявка, избор на модел и опашка от няколко чакащи заявки.
+# Claude Scheduler
 
-## Какво е ново в 2.1
+A browser extension for scheduling and automating prompts on Claude.ai.
 
-**Моделите са във файл — `settings.json`**
-- Отворете `settings.json` с Notepad (или друг текстов редактор) и променете списъка `"models"`. Пишете имената точно както са в менюто на claude.ai.
-- Няма значение дали моделът е в основното меню или в **„More models"** — добавката проверява първо основното меню и после сама отваря подменюто.
-- След промяна затворете и отворете попъпа. Ако не се отрази, натиснете ⟳ на добавката в `brave://extensions`.
-- Ако файлът се развали (липсваща запетая или кавичка), попъпът показва червено съобщение под полето „Модел".
-- Автоматичното „учене" на модели и бутонът „↻ Обнови" са премахнати — списъкът вече идва само от файла.
+Schedule messages, manage prompt queues, select AI models, and automate your workflow directly from your browser.
 
-**Поправки за новото меню на claude.ai**
-- Моделите в „More models" (Opus 4.8, Sonnet 4.6 и др.) вече се намират.
-- Точно сравнение на имената: „Opus 5" вече не се бърка с „Opus 5.5", нито „Fable 5" с „Fable 5.1".
-- Менюто се отваря по няколко начина (клик, натискане, клавиатура), ако claude.ai смени поведението си.
+## Features
 
-**Усилие (Effort)**
-- До модела има поле „Усилие" (Low / Medium / High / Extra / Max). По подразбиране е „Без промяна". Нивата също са в `settings.json`.
+- ⏰ Schedule prompts for a specific date and time
+- 📋 Manage multiple scheduled messages in a queue
+- 🤖 Select Claude models and configure effort levels
+- ⚡ Quick scheduling with customizable time presets
+- 🔄 Automatic retries for failed requests
+- 💬 Send prompts to existing or new conversations
+- ⏳ Live countdown timers for scheduled tasks
+- 💾 Persistent storage for scheduled prompts
+- 🔔 Notifications and execution status tracking
 
-**Бързи бутони +3 ч / +5 ч / +10 ч / +15 ч**
-- Под часа. Натискането добавя часовете към попълнения час (ако е в бъдещето), иначе към текущия момент. Така +3 и после +5 дава +8.
-- „Сега" връща към текущия момент. До бутоните се вижда колко остава („след 8 ч 00 мин").
-- Стойностите на бутоните се сменят в `settings.json` → `"quickHours"`.
+## Installation
 
-## Какво беше ново в 2.0
+1. Download or clone this repository.
+2. Open Brave and navigate to `brave://extensions`.
+3. Enable **Developer mode**.
+4. Click **Load unpacked**.
+5. Select the `claude-scheduler` folder.
 
-**Стабилност (основната промяна)**
-- **Пазач на всеки ~30 секунди** — ако алармата не сработи (Chrome приспива service worker-а на добавките), пазачът хваща закъснялата заявка и я изпълнява. Закъснение до 5 минути се навакса; над това заявката става „пропусната".
-- **Автоматично инжектиране на скрипта** — най-честата причина да „работи понякога" беше, че вече отворените раздели остават без скрипт след презареждане на добавката. Сега добавката проверява и при нужда зарежда скрипта в раздела.
-- **До 3 опита** с 45 секунди пауза при грешка, преди заявката да се отбележи като неуспешна.
-- **Защита от двойно изпращане** — всяка заявка има свой идентификатор; при повторен опит страницата не изпраща същото съобщение втори път и проверява последното съобщение в разговора.
-- **Изчакване, ако Клод още пише** — заявката изчаква текущия отговор да завърши, вместо да се провали.
-- **Прекъснати заявки** (рестарт по средата) се връщат в опашката, вместо да заседнат на „изпълнява се".
-- След изпращане фокусът се връща на раздела, в който сте били.
+The extension is now ready to use.
 
-**Текуща страница и модел**
-- ID-то на разговора се чете от отворената страница при **всяко** отваряне на попъпа. Ръчно въведеното ID има приоритет, а бутонът **„От текущата страница"** го връща към текущия чат.
-- Полето за модел е списък. **Първата опция е моделът, който в момента е избран** („Opus 5.5 · вече избран") и означава „без промяна". Изберете друг само ако искате смяна.
-- За **нов разговор** се показва моделът по подразбиране, който добавката е видяла последно на claude.ai/new.
+## Usage
 
-**Форма и списък**
-- Черновата (час, дата, текст) се пази, докато пишете — както досега.
-- След успешно добавяне **всичко се нулира** и ID-то се чете наново от текущата страница.
-- В списъка **най-новата заявка е най-отгоре**.
-- Всяка заявка си има собствен брояч; в заглавието стои броячът до най-близката.
+1. Open [Claude.ai](https://claude.ai) and sign in.
+2. Click the Claude Scheduler extension icon.
+3. Enter your prompt and select the desired execution time.
+4. Optionally configure the AI model and effort level.
+5. Click **Add to Queue**.
 
-## Инсталиране в Brave
-1. Отворете `brave://extensions`
-2. Включете **Developer mode**
-3. **Load unpacked** → изберете папката `claude-scheduler`
-4. Ако обновявате от стара версия: натиснете ⟳ върху картата на добавката и презаредете отворените раздели с claude.ai (или ги оставете — добавката ще ги обнови сама при първото изпълнение).
+The extension will automatically execute your prompt at the scheduled time.
 
-## Използване
-1. Отворете разговора в claude.ai и натиснете иконата на добавката — ID-то и текущият модел се показват автоматично.
-2. Задайте час (и дата, ако не е за днес/утре), при нужда друг модел, и текста.
-3. **„Добави в опашката"**. Формата се изчиства, заявката застава най-отгоре с обратен брояч.
+You can also edit, delete, or manually execute scheduled tasks.
 
-Бутонът **„Сега"** попълва текущия момент; **„Редактирай"**, **„Изпълни сега"** и **„Изтрий"** са налични за всяка заявка.
+## Configuration
 
-## Условия за работа
-- **Brave трябва да е отворен** в зададения момент. При затворен браузър заявката става „пропусната" и можете да я пуснете ръчно или да ѝ дадете нов час.
-- Трябва да сте **влезли в claude.ai**.
-- В момента на изпращане разделът излиза на преден план за кратко — това е нужно, за да работи надеждно въвеждането в редактора. След това фокусът се връща обратно.
-- Моделите с кредити (напр. Fable) може да не се превключат, ако нямате кредити — заявката пак се изпраща, но с предупреждение.
-- Ако менюто на claude.ai се преименува (напр. „More models" стане друго), сменете надписите в `settings.json` → `"menuLabels"`.
-- Ако Anthropic промени интерфейса по-сериозно, селекторите са в `content.js` (`findEditor`, `findSendButton`, `findModelTrigger`), с по няколко резервни варианта.
+Customize the extension through `settings.json`:
 
-## Файлове
-- `settings.json` — **моделите, нивата на усилие и бързите бутони (редактира се ръчно)**
-- `manifest.json` — конфигурация (Manifest V3; alarms, storage, tabs, notifications, scripting)
-- `background.js` — аларми, пазач, повторни опити, отваряне на раздели
-- `content.js` — четене/смяна на модела и усилието, въвеждане на текста и изпращане в страницата
-- `popup.html / popup.css / popup.js` — формата, броячите и списъка
+- Available AI models
+- Effort levels
+- Quick scheduling intervals
+- Model menu labels
+
+## Requirements
+
+- Brave browser
+- Active Claude.ai session
+- Browser must remain open for scheduled execution
+
+> Note: This extension interacts with the Claude.ai web interface. Changes to the website may affect its functionality.
+
+## Tech Stack
+
+JavaScript · Chrome Extension Manifest V3 · Chrome Storage API · Chrome Alarms API
+
+## Disclaimer
+
+This is an independent project and is not affiliated with or endorsed by Anthropic.
