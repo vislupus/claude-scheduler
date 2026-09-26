@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="bg">
+<head>
+  <meta charset="UTF-8" />
+  <title>Claude Scheduler</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header>
+    <div class="brand">CLAUDE&nbsp;SCHEDULER</div>
+    <div id="next-countdown" class="next">
+      <span class="next-label">следващо активиране след</span>
+      <span id="next-time" class="next-time">--:--:--</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="card">
+      <form id="task-form">
+        <div class="datetime-head">
+          <span>Дата и час</span>
+          <button type="button" class="now-button" id="fill-now" aria-pressed="false" title="Попълни текущите дата и час">Сега</button>
+        </div>
+
+        <div class="row two datetime-row">
+          <label>
+            Час
+            <div class="masked-field" id="time-field" role="group" aria-label="Час във формат час и минути">
+              <input type="text" id="time-hours" class="mask-part mask-2" inputmode="numeric" autocomplete="off" maxlength="2" placeholder="ЧЧ" aria-label="Час" />
+              <span class="mask-separator" aria-hidden="true">:</span>
+              <input type="text" id="time-minutes" class="mask-part mask-2" inputmode="numeric" autocomplete="off" maxlength="2" placeholder="ММ" aria-label="Минути" />
+            </div>
+            <span class="hint">24-часов формат</span>
+          </label>
+
+          <label>
+            Дата
+            <div class="masked-field date-field" id="date-field" role="group" aria-label="Дата във формат ден, месец и година">
+              <input type="text" id="date-day" class="mask-part mask-2" inputmode="numeric" autocomplete="off" maxlength="2" placeholder="ДД" aria-label="Ден" />
+              <span class="mask-separator" aria-hidden="true">.</span>
+              <input type="text" id="date-month" class="mask-part mask-2" inputmode="numeric" autocomplete="off" maxlength="2" placeholder="ММ" aria-label="Месец" />
+              <span class="mask-separator" aria-hidden="true">.</span>
+              <input type="text" id="date-year" class="mask-part mask-4" inputmode="numeric" autocomplete="off" maxlength="4" placeholder="ГГГГ" aria-label="Година" />
+            </div>
+            <span class="hint">празно = днес / утре</span>
+          </label>
+        </div>
+
+        <div class="row">
+          <div class="seg" role="radiogroup" aria-label="Разговор">
+            <label class="seg-opt">
+              <input type="radio" name="chatMode" value="existing" checked />
+              <span>Съществуващ чат</span>
+            </label>
+            <label class="seg-opt">
+              <input type="radio" name="chatMode" value="new" />
+              <span>Нов разговор</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="row" id="chat-id-row">
+          <label class="field-head">
+            <span>Линк или ID на чата</span>
+            <button type="button" class="mini" id="use-current">От текущата страница</button>
+          </label>
+          <input type="text" id="chatId" placeholder="https://claude.ai/chat/… или само ID-то" />
+          <div class="page-note" id="page-note">Проверявам текущата страница…</div>
+        </div>
+
+        <div class="row">
+          <label class="field-head">
+            <span>Модел</span>
+            <button type="button" class="mini" id="refresh-models" title="Прочети списъка с модели от страницата">↻ Обнови</button>
+          </label>
+          <select id="model"></select>
+          <div class="page-note" id="model-note"></div>
+        </div>
+
+        <div class="row">
+          <label>
+            Съобщение
+            <textarea id="message" rows="3" required placeholder="Continue"></textarea>
+          </label>
+        </div>
+
+        <div class="row form-actions">
+          <button type="submit" class="primary" id="submit-btn">Добави в опашката</button>
+          <button type="button" class="ghost" id="cancel-edit" hidden>Откажи</button>
+        </div>
+        <div class="draft-note">Недовършеното се запазва автоматично.</div>
+        <div id="form-error" class="error" hidden></div>
+      </form>
+    </section>
+
+    <section>
+      <div class="list-head">
+        <h2>Чакащи заявки</h2>
+        <button id="clear-done" class="ghost" hidden>Изчисти приключените</button>
+      </div>
+      <ul id="task-list"></ul>
+      <div id="empty" class="empty">Няма планирани заявки. Добавете първата отгоре.</div>
+    </section>
+  </main>
+
+  <script src="popup.js"></script>
+</body>
+</html>
